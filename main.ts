@@ -22,18 +22,6 @@ class SavedData {
 export default class NoteRecall extends Plugin {
 	settings: MyPluginSettings;
 
-	async get_file_content(){
-		const { vault } = this.app;
-		const activeFile = app.workspace.getActiveFile();
-
-		if (activeFile) {
-		return vault.cachedRead(activeFile);
-		}
-		else{
-			return ""
-		}
-	}
-
 	async onload() {
 		await this.loadSettings();
 
@@ -41,6 +29,8 @@ export default class NoteRecall extends Plugin {
 			id: 'start-game',
 			name: 'Start game',
 			callback: async () => {
+
+				// read current file
 
 				const activeFile = app.workspace.getActiveFile();
 
@@ -51,6 +41,8 @@ export default class NoteRecall extends Plugin {
 
 				let modified_article = await app.vault.cachedRead(activeFile)
 				
+				// generate word list 
+
 				const englishWords: string[] = [];
 				const wordPositions: number[] = [];
 
@@ -70,19 +62,15 @@ export default class NoteRecall extends Plugin {
 
 				const chosenWords = chosenIndexes.map(index => englishWords[index]);
 				
-				
-
 				// save it to data.json
 
-				if (activeFile){
-					this.saveData(new SavedData(chosenWords.slice().reverse(), activeFile.path))
-				}
+				this.saveData(new SavedData(chosenWords.slice().reverse(), activeFile.path))
 				
+				// create challenge.md
+
 				for (const index of chosenIndexes) {
 					modified_article = modified_article.slice(0, wordPositions[index]) + "🏴🏴" + modified_article.slice(wordPositions[index] + englishWords[index].length);
 				}
-				
-				console.log(modified_article)
 				
 				let challenge_file = this.app.vault.getAbstractFileByPath("challenge.md")
 				if (challenge_file instanceof TFile){
@@ -99,16 +87,25 @@ export default class NoteRecall extends Plugin {
 			id: 'submit',
 			name: 'Submit',
 			callback: async () => {
+
+				// check if it's the right place
+
 				const activeFile = app.workspace.getActiveFile();
+				
+				if (activeFile == null || activeFile.basename != 'challenge.md'){
+					new Notice("You can only do this on the challenge file!")
+					return
+				}
+
+				// read answers and guesses
 
 				let saved_data = await this.loadData()
 				let answers = saved_data.words
 				let original_file_path: string = saved_data.path
-				let modified_article = await this.get_file_content()
+
+				let modified_article = await app.vault.cachedRead(activeFile)
 				let guesses = new Array<string>()				
 
-				console.log(answers, original_file_path)
-				
 				const wordRegex: RegExp = /🏴(.*?)🏴/g;
 				let match: RegExpExecArray | null = wordRegex.exec(modified_article);
 
@@ -116,6 +113,8 @@ export default class NoteRecall extends Plugin {
 					guesses.push(match[0].replace(/🏴/g, ''));
 					match = wordRegex.exec(modified_article);
 				}
+
+				// calculate scores
 
 				let totalScore = 0;
 				const scores: number[] = [];
@@ -135,11 +134,12 @@ export default class NoteRecall extends Plugin {
 
 				const finalScore = (100 * totalScore) / guesses.length;
 
+				// edit file
+
 				for (let i = 0; i < guesses.length; i++) {
 					const guess = guesses[i];
 					const answer = answers[i];
 					const score = scores[i];
-					console.log(score)
 					const flagColor =
 					  score < 0.5 ? '🔴' : score < 0.9 ? '🟡' : '🟢';
 					modified_article = modified_article.replace(
@@ -147,7 +147,6 @@ export default class NoteRecall extends Plugin {
 					  `🚩${guess}|${answer}${flagColor}`
 					);
 				  }
-				console.log(original_file_path)
 				modified_article = `# 📝 Score ${Math.round(finalScore)}\n🔙 [[${path.basename(original_file_path, '.md')}]]\n\n` + modified_article
 
 				if (activeFile){
