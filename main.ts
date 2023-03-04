@@ -34,13 +34,17 @@ export default class NoteRecall extends Plugin {
 
 				const activeFile = app.workspace.getActiveFile();
 
-				if (activeFile == null){
+				if (!activeFile){
 					new Notice("Please open a note file!")
 					return
 				}
 
 				let modified_article = await app.vault.cachedRead(activeFile)
-				
+				if (modified_article.length < this.settings.difficuty){
+					new Notice("Not enough words!")
+					return
+				}
+
 				// generate word list 
 
 				const englishWords: string[] = [];
@@ -92,7 +96,7 @@ export default class NoteRecall extends Plugin {
 
 				const activeFile = app.workspace.getActiveFile();
 				
-				if (activeFile == null || activeFile.basename != 'challenge.md'){
+				if (!activeFile || activeFile.basename != 'challenge'){
 					new Notice("You can only do this on the challenge file!")
 					return
 				}
@@ -109,7 +113,7 @@ export default class NoteRecall extends Plugin {
 				const wordRegex: RegExp = /🏴(.*?)🏴/g;
 				let match: RegExpExecArray | null = wordRegex.exec(modified_article);
 
-				while (match !== null) {
+				while (match) {
 					guesses.push(match[0].replace(/🏴/g, ''));
 					match = wordRegex.exec(modified_article);
 				}

@@ -1,5 +1,4 @@
 export function getRandomIndexes(arr: number[], n: number): number[] {
-    console.log(arr, n)
     const result = new Array(n);
     let len = arr.length;
     const taken = new Array(len);
