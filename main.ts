@@ -1,6 +1,6 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
-// Remember to rename these classes and interfaces!
+import { App, Editor, FileManager, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import * as path from 'path';
+import { getRandomIndexes, similarity } from 'tools';
 
 interface MyPluginSettings {
 	mySetting: string;
@@ -10,8 +10,38 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: 'default'
 }
 
-export default class MyPlugin extends Plugin {
+class SavedData {
+	words: Array<string>
+	path: string
+	constructor(words: Array<string>, path: string) {
+		this.words = words
+		this.path = path
+	}
+}
+
+export default class NoteRecall extends Plugin {
 	settings: MyPluginSettings;
+
+	async get_file_content(){
+		const { vault } = this.app;
+		const activeFile = app.workspace.getActiveFile();
+
+		if (activeFile) {
+		return vault.cachedRead(activeFile);
+		}
+		else{
+			return ""
+		}
+	}
+
+	async create_file(content: string){
+		this.app.vault.create("challenge.md", content)
+		this.app.workspace.openLinkText("challenge.md", "/");
+
+		// await this.saveData(new SavedData(['1', '2']))
+		// let loaded_data = await this.loadData()
+		// console.log(loaded_data.words)
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -28,54 +58,134 @@ export default class MyPlugin extends Plugin {
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText('Status Bar Text');
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+			id: 'start-game',
+			name: 'Start game',
+			callback: async () => {
+				let modified_article = await this.get_file_content()
+				
+				const englishWords: string[] = [];
+				const wordPositions: number[] = [];
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+				const wordRegex: RegExp = /\b[a-zA-Z]+\b/g;
+				let match: RegExpExecArray | null = wordRegex.exec(modified_article);
+
+				while (match !== null) {
+					englishWords.push(match[0]);
+					wordPositions.push(match.index);
+					match = wordRegex.exec(modified_article);
 				}
+
+				const number_range = [...Array(englishWords.length).keys()];
+
+				const chosenIndexes = getRandomIndexes(number_range, Math.round(englishWords.length / 10));
+				chosenIndexes.sort((a, b) => b - a);
+
+				const chosenWords = chosenIndexes.map(index => englishWords[index]);
+				
+				const activeFile = app.workspace.getActiveFile();
+
+				// save it to data.json
+
+				if (activeFile){
+					this.saveData(new SavedData(chosenWords.slice().reverse(), activeFile.path))
+				}
+				console.log(chosenWords.slice().reverse(), chosenWords)
+				
+
+				// console.log(englishWords, chosenIndexes, chosenWords)
+				// console.log(chosenIndexes, chosenWords)
+				for (const index of chosenIndexes) {
+					modified_article = modified_article.slice(0, wordPositions[index]) + "🏴🏴" + modified_article.slice(wordPositions[index] + englishWords[index].length);
+				}
+				
+				console.log(modified_article)
+				
+				let challenge_file = this.app.vault.getAbstractFileByPath("challenge.md")
+				if (challenge_file instanceof TFile){
+					await this.app.vault.modify(challenge_file, modified_article)
+				}
+				else{
+					await this.app.vault.create("challenge.md", modified_article)
+				}
+				this.app.workspace.openLinkText("challenge.md", "/");
+			},
+		})
+
+		this.addCommand({
+			id: 'submit',
+			name: 'Submit',
+			callback: async () => {
+				const activeFile = app.workspace.getActiveFile();
+
+				let saved_data = await this.loadData()
+				let answers = saved_data.words
+				let original_file_path: string = saved_data.path
+				let modified_article = await this.get_file_content()
+				let guesses = new Array<string>()				
+
+				console.log(answers, original_file_path)
+				
+				const wordRegex: RegExp = /🏴(.*?)🏴/g;
+				let match: RegExpExecArray | null = wordRegex.exec(modified_article);
+
+				while (match !== null) {
+					guesses.push(match[0].replace(/🏴/g, ''));
+					match = wordRegex.exec(modified_article);
+				}
+
+				let totalScore = 0;
+				const scores: number[] = [];
+
+				for (let i = 0; i < guesses.length; i++) {
+					const guess = guesses[i];
+					const answer = answers[i];
+					if (guess && answer){
+						const score = similarity(guess, answer);
+						totalScore += score;
+						scores.push(score);
+					}
+					else{
+						scores.push(0)
+					}
+				}
+
+				const finalScore = (100 * totalScore) / guesses.length;
+
+				for (let i = 0; i < guesses.length; i++) {
+					const guess = guesses[i];
+					const answer = answers[i];
+					const score = scores[i];
+					console.log(score)
+					const flagColor =
+					  score < 0.5 ? '🔴' : score < 0.9 ? '🟡' : '🟢';
+					modified_article = modified_article.replace(
+					  `🏴${guess}🏴`,
+					  `🚩${guess}|${answer}${flagColor}`
+					);
+				  }
+				console.log(original_file_path)
+				modified_article = `# 📝 Score ${Math.round(finalScore)}\n🔙 [[${path.basename(original_file_path, '.md')}]]\n\n` + modified_article
+
+				if (activeFile){
+					app.vault.modify(activeFile, modified_article)
+				}
+
+
 			}
-		});
+		})
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SampleSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+		// this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+		// 	console.log('click', evt);
+		// });
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
@@ -108,9 +218,9 @@ class SampleModal extends Modal {
 }
 
 class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+	plugin: NoteRecall;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: NoteRecall) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
